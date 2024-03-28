@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -6,13 +7,20 @@ const char* filepath = "data/binary0.npy";
 
 // BYTES PER WORD
 const int WORD_SIZE = 8;
-// WORDS PER CACHE LINE
-const int CACHE_LINE_LENGTH = 8;
 // BITS PER CACHE LINE
-const int CACHE_LINE_SIZE = CACHE_LINE_LENGTH * WORD_SIZE;
+const int CACHE_LINE_SIZE = 8 * WORD_SIZE;
 
 // .NUMPY..v.
 const unsigned char numpy_header[8] = {0x93, 0x4e, 0x55, 0x4d, 0x50, 0x59, 0x01, 0x00};
+const unsigned char second_word_start[3] = {0x76, 0x00, 0x7b};
+
+enum PARSE_STATE {
+    PARSE_HEADER,
+    PARSE_JSON,
+    PARSE_JSON_KEY,
+    PARSE_JSON_VALUE,
+    PARSE_DATA
+};
 
 /*
 Want to read the file in CACHE_LINE_SIZE chunks, the header will in general
@@ -54,80 +62,120 @@ int main() {
         exit(1);
     }
 
+    enum PARSE_STATE read_mode = PARSE_HEADER;
+
     // Allocating memory on the stack for the cache line chunk we read in, we
     // only want to read in CACHE_LINE_SIZE bits at a time to make this a bit
     // more challenging
     unsigned char data[CACHE_LINE_SIZE];
+    data[CACHE_LINE_SIZE - 1] = 0x00;
+
+    int idx = -1;
 
     /*
     READ IN THE HEADER
     */
-    // Reads in CACHE_LINE_SIZE bits from the file and stores it in the data,
-    // this moves the internal file pointer to the next CACHE_LINE_SIZE bits
-    // so we don't have to keep track of how many bits we've read so far.
-    size_t itemsRead = fread(&data, 1, sizeof(data), file);
+    while(data[CACHE_LINE_SIZE - 1] != 0x0a) {
+        // Reads in CACHE_LINE_SIZE bits from the file and stores it in the data,
+        // this moves the internal file pointer to the next CACHE_LINE_SIZE bits
+        // so we don't have to keep track of how many bits we've read so far.
+        size_t itemsRead = fread(&data, 1, sizeof(data), file);
 
-    // Hexdumps the cache line with relative numbering
-    printf("0000 -> ");
-    for(int i = 0; i < CACHE_LINE_SIZE; i++) {
-        printf("%02x ", data[i]);
-        if(i % 8 == 7) {
-            printf("\n");
-            printf("%04x -> ", i + 1);
+        // There are not enough bits in the file to read in a CACHE_LINE_SIZE chunk
+        // which would mean that the file is not aligned properly, don't want to
+        // support that case so we just exit.
+        if (itemsRead != sizeof(data)) {
+            printf("Failed to read full cache line from the file, it's encoded improperly.\n");
+            fclose(file);
+            exit(1);
+        } 
+
+        // Hexdumps the cache line with relative numbering
+        printf("HEXDUMP of Cache Line:\n");
+        for(int i = 0; i < CACHE_LINE_SIZE; i++) {
+            if(i % 8 == 0) {
+                printf("\t%04x -> ", i + 1);
+            }
+            printf("%02x ", data[i]);
+            if(i % 8 == 7) {
+                printf("\n");
+            }
         }
-    }
+        
+        printf("\n");
 
-    // There are not enough bits in the file to read in a CACHE_LINE_SIZE chunk
-    // which would mean that the file is not aligned properly, don't want to
-    // support that case so we just exit.
-    if (itemsRead != sizeof(data)) {
-        printf("Failed to read CACHE_LINE_SIZE bits from the file.\n");
-        fclose(file);
-        exit(1);
-    } 
-    
-    // Checks if this cacheline is the last one, will need to be able to handle
-    // having multiple cache lines back to back which don't end in 0x0a, 
-    // in the worst case it'll just read through the entire file.
-    if(data[CACHE_LINE_SIZE - 1] != 0x0a) {
-        printf("The last byte of the header is not a newline character.\n");
-        fclose(file);
-        exit(1);
-    }
+        // Will need to have different reading modes for the cache line, at the
+        // start we're trying to parse the first word of the header to check if
+        // it's a .npy file. Afterwards we need to write a json parser.
+        if(read_mode == PARSE_HEADER) {
+            printf("Checking if the header starts with '.NUMPY..v.' \n");
+            for(int j = 0; j < 8; j++) {
+                if (data[j] != numpy_header[j]) {
+                    printf("Header mismatch at position %d.\n", j);
+                    fclose(file);
+                    exit(1);
+                }
+            }
+            printf("This file is a .npy file, reading the header params.\n");
+        }
+        
+        // Checks that the second word starts with 'v.{'
+        for(int j = 0; j < 3; j++) {
+            if (data[8 + j] != second_word_start[j]) {
+                printf("Header mismatch at position %d.\n", j);
+                fclose(file);
+                exit(1);
+            }
+        }
 
-    // Will need to have different reading modes for the cache line, at the
-    // start we're trying to parse the first word of the header to check if
-    // it's a .npy file. Afterwards we need to write a json parser.
-    printf("Checking if the header starts with '.NUMPY..v.' \n");
-    for(int j = 0; j < 8; j++) {
-        if (data[j] != numpy_header[j]) {
-            printf("Header mismatch at position %d.\n", j);
+        if(read_mode == PARSE_HEADER) {
+            int idx = 11;
+            read_mode = PARSE_JSON_KEY;
+        }
+        if(idx == -1) {
+            printf("Failed to find the start of the JSON object.\n");
             fclose(file);
             exit(1);
         }
-    }
-    printf("This file is a .npy file, reading the header params.\n");
 
-    for (int j = 0; j < CACHE_LINE_SIZE; j++) {
-        printf("%02x ", data[j]);
-        if(j % 8 == 7) {
-            printf("\n");
+        char curr = data[idx];
+
+        switch (read_mode) {
+            case PARSE_JSON:
+                printf("Parsing JSON object...\n");
+                if((curr != '\'') && (curr !== '\"')){
+                    //
+                }
+                break;
+            case PARSE_JSON_KEY:
+                printf("Parsing JSON key...\n");
+                // TODO: Implement JSON key parsing logic
+                break;
+            case PARSE_JSON_VALUE:
+                printf("Parsing JSON value...\n");
+                // TODO: Implement JSON value parsing logic
+                break;
+            default:
+                printf("Invalid read mode. Exiting the program.\n");
+                fclose(file);
+                exit(-1);
         }
+
+        printf("\n");
+        printf("Finished reading in the header.\n");
+
+        /*
+        We know from the "descr" value what kind of bit alignment the contents have
+        and we know how to interpret them, so this should be relatively easy.
+
+        Read in 1, 2, 4, 8 bytes depending on how large the datatype is and then
+        parse the binary data to the correct type, I think a switch statement would
+        be great here, I think we'll just parse and print it for now.
+
+        Supporting different shapes also shouldn't be a problem, but we'll deal with
+        that once we get to it.
+        */
     }
-    printf("\n");
-    printf("Finished reading in the header.");
-
-    /*
-    We know from the "descr" value what kind of bit alignment the contents have
-    and we know how to interpret them, so this should be relatively easy.
-
-    Read in 1, 2, 4, 8 bytes depending on how large the datatype is and then
-    parse the binary data to the correct type, I think a switch statement would
-    be great here, I think we'll just parse and print it for now.
-
-    Supporting different shapes also shouldn't be a problem, but we'll deal with
-    that once we get to it.
-    */
 
     fclose(file);
     return 0;
