@@ -1,4 +1,8 @@
 *.npy
 *.npz
+*.pkl
+*.txt
 
 *.o
+
+.DS_Store
