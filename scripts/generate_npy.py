@@ -22,7 +22,7 @@ def is_valid_path(filepath: str) -> bool:
     return True
 
 
-def generate_files(
+def generate_npy(
     num_entries: int, num_files: int, filepath: str, seed: int = None
 ) -> None:
     """
@@ -61,7 +61,6 @@ def generate_files(
         f"Generated and saved {num_files} binary files of length {num_entries} to {filepath}"
     )
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate and save binary .npy files.")
     parser.add_argument("-N", type=int, help="Length of the binary data array.")
@@ -77,4 +76,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    generate_files(args.N, args.number, args.f, args.seed)
+    generate_npy(args.N, args.number, args.f, args.seed)

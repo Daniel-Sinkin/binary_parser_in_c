@@ -5,6 +5,8 @@
 
 const char* filepath = "data/binary0.npy";
 
+const int MAX_JSON_KEY_SIZE = 64;
+
 // BYTES PER WORD
 const int WORD_SIZE = 8;
 // BITS PER CACHE LINE
@@ -122,43 +124,61 @@ int main() {
         // Checks that the second word starts with 'v.{'
         for(int j = 0; j < 3; j++) {
             if (data[8 + j] != second_word_start[j]) {
-                printf("Header mismatch at position %d.\n", j);
+                printf("Header mismatch at position %d.\n", 8 + j);
                 fclose(file);
                 exit(1);
             }
         }
 
         if(read_mode == PARSE_HEADER) {
-            int idx = 11;
+            idx = 11;
             read_mode = PARSE_JSON_KEY;
-        }
-        if(idx == -1) {
+        } else if(idx == -1) {
             printf("Failed to find the start of the JSON object.\n");
             fclose(file);
             exit(1);
         }
 
-        char curr = data[idx];
+        while(idx < CACHE_LINE_SIZE) {
+            char curr = data[idx];
+            switch (read_mode) {
+                case PARSE_JSON:
+                    printf("Parsing JSON object...\n");
+                    if((curr != '\'') && (curr != '\"')){
+                        printf("<MISFORMED_KEY>Invalid JSON object. Exiting the program.\n");
+                        fclose(file);
+                        exit(-1);
+                    }
+                    read_mode = PARSE_JSON_KEY;
+                    unsigned char key[MAX_JSON_KEY_SIZE];
+                    size_t key_idx = 0;
+                    break;
+                case PARSE_JSON_KEY:
+                    if ((curr != '\'') && (curr != '\"')) {
+                        key[key_idx] = curr;
+                    } else {
+                        key[key_idx] = '\0';
+                        printf("Parsed JSON key: %s\n", key);
+                        read_mode = PARSE_JSON_VALUE;
+                    } 
+                    key_idx += 1;
+                    if(key_idx >= MAX_JSON_KEY_SIZE) {
+                        printf("<KEY_TOO_LONG>Invalid JSON object. Exiting the program.\n");
+                        fclose(file);
+                        exit(-1);
+                    }
+                    break;
+                case PARSE_JSON_VALUE:
+                    printf("Parsing JSON value...\n");
 
-        switch (read_mode) {
-            case PARSE_JSON:
-                printf("Parsing JSON object...\n");
-                if((curr != '\'') && (curr !== '\"')){
-                    //
-                }
-                break;
-            case PARSE_JSON_KEY:
-                printf("Parsing JSON key...\n");
-                // TODO: Implement JSON key parsing logic
-                break;
-            case PARSE_JSON_VALUE:
-                printf("Parsing JSON value...\n");
-                // TODO: Implement JSON value parsing logic
-                break;
-            default:
-                printf("Invalid read mode. Exiting the program.\n");
-                fclose(file);
-                exit(-1);
+                    // TODO: Implement JSON value parsing logic
+                    break;
+                default:
+                    printf("Invalid read mode. Exiting the program.\n");
+                    fclose(file);
+                    exit(-1);
+            }
+            idx += 1;
         }
 
         printf("\n");
