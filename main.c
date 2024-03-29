@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 
 const char* filepath = "data/binary0.npy";
 
@@ -16,6 +17,7 @@ const int CACHE_LINE_SIZE = 8 * WORD_SIZE;
 const unsigned char numpy_header[8] = {0x93, 0x4e, 0x55, 0x4d, 0x50, 0x59, 0x01, 0x00};
 const unsigned char second_word_start[3] = {0x76, 0x00, 0x7b};
 
+
 enum PARSE_STATE {
     PARSE_HEADER,
     PARSE_JSON,
@@ -23,6 +25,14 @@ enum PARSE_STATE {
     PARSE_JSON_VALUE,
     PARSE_DATA
 };
+
+enum SELECTED_KEY {
+    NONE,
+    DESCR,
+    FORTRAN_ORDER,
+    SHAPE
+};
+
 
 /*
 Want to read the file in CACHE_LINE_SIZE chunks, the header will in general
@@ -65,6 +75,7 @@ int main() {
     }
 
     enum PARSE_STATE read_mode = PARSE_HEADER;
+    enum SELECTED_KEY selected_key = NONE;
 
     // Allocating memory on the stack for the cache line chunk we read in, we
     // only want to read in CACHE_LINE_SIZE bits at a time to make this a bit
@@ -121,26 +132,24 @@ int main() {
             printf("This file is a .npy file, reading the header params.\n");
         }
         
-        // Checks that the second word starts with 'v.{'
-        for(int j = 0; j < 3; j++) {
-            if (data[8 + j] != second_word_start[j]) {
-                printf("Header mismatch at position %d.\n", 8 + j);
-                fclose(file);
-                exit(1);
-            }
-        }
-
         if(read_mode == PARSE_HEADER) {
             idx = 11;
-            read_mode = PARSE_JSON_KEY;
+            read_mode = PARSE_JSON;
         } else if(idx == -1) {
             printf("Failed to find the start of the JSON object.\n");
             fclose(file);
             exit(1);
         }
+        
+        if(data[idx - 1] != '{'){
+            printf("%c", data[idx]);
+            printf("Invalid JSON object. Exiting the program.\n");
+            break;
+        }
 
         while(idx < CACHE_LINE_SIZE) {
             char curr = data[idx];
+            printf("curr = %c\n", curr);
             switch (read_mode) {
                 case PARSE_JSON:
                     printf("Parsing JSON object...\n");
@@ -150,16 +159,34 @@ int main() {
                         exit(-1);
                     }
                     read_mode = PARSE_JSON_KEY;
-                    unsigned char key[MAX_JSON_KEY_SIZE];
+                    char key[MAX_JSON_KEY_SIZE];
                     size_t key_idx = 0;
                     break;
                 case PARSE_JSON_KEY:
                     if ((curr != '\'') && (curr != '\"')) {
                         key[key_idx] = curr;
                     } else {
+                        printf("Hit the end!\n");
                         key[key_idx] = '\0';
-                        printf("Parsed JSON key: %s\n", key);
+                        printf("The final key is %s!\n", key);
                         read_mode = PARSE_JSON_VALUE;
+
+                        if(strcmp(key, "descr") == 0) {
+                            printf("We have correctly parse the 'descr' key!\n");
+                            selected_key = DESCR;
+                        } else if(strcmp(key, "fortran_order")) {
+                            printf("We have correctly parse the 'fortran_order' key!\n");
+                            selected_key = FORTRAN_ORDER;
+                        } else if(strcmp(key, "shape") == 0) {
+                            printf("We have correctly parse the 'shape' key!\n");
+                            selected_key = SHAPE;
+                        } else {
+                            printf("Invalid JSON key '%s'. Exiting the program.\n", key);
+                            fclose(file);
+                            exit(-1);
+                        }
+                        char key[MAX_JSON_KEY_SIZE];
+                        size_t key_idx = 0;
                     } 
                     key_idx += 1;
                     if(key_idx >= MAX_JSON_KEY_SIZE) {
@@ -167,10 +194,16 @@ int main() {
                         fclose(file);
                         exit(-1);
                     }
+                    printf("key = ");
+                    for (int i = 0; i < key_idx; i++) {
+                        printf("%c", key[i]);
+                    }
+                    printf("\n");
                     break;
                 case PARSE_JSON_VALUE:
                     printf("Parsing JSON value...\n");
 
+                    return 0;
                     // TODO: Implement JSON value parsing logic
                     break;
                 default:
